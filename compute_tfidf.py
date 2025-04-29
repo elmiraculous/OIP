@@ -2,71 +2,103 @@ import os
 import math
 from collections import defaultdict
 
-TOTAL_DOCS = 192
 
-def calculate_df(directory, is_lemma=False):
-    df_counts = defaultdict(int)
-    
-    for i in range(1, TOTAL_DOCS + 1):
-        filename = f'lemmas_{i}.txt' if is_lemma else f'token_{i}.txt'
-        filepath = os.path.join(directory, filename)
-        if not os.path.exists(filepath):
-            continue
-        with open(filepath, 'r', encoding='utf-8') as f:
-            if is_lemma:
-                terms = set(line.strip().split()[0] for line in f)
-            else:
-                terms = set(line.strip() for line in f)
-            for term in terms:
-                df_counts[term] += 1
+def load_documents(tokens_dir, lemmas_dir, max_docs=192):
+    documents_tokens = {}
+    documents_lemmas = {}
 
-    return df_counts
+    for doc_id in range(1, max_docs + 1):
+        token_file = os.path.join(tokens_dir, f"token_{doc_id}.txt")
+        lemma_file = os.path.join(lemmas_dir, f"lemmas_{doc_id}.txt")
+
+        if os.path.exists(token_file):
+            with open(token_file, 'r', encoding='utf-8') as f:
+                documents_tokens[str(doc_id)] = f.read().split()
+
+        if os.path.exists(lemma_file):
+            documents_lemmas[str(doc_id)] = []
+            with open(lemma_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    lemma, *forms = line.strip().split()
+                    documents_lemmas[str(doc_id)].append((lemma, forms))
+
+    return documents_tokens, documents_lemmas
 
 
-def compute_tfidf(df_counts, input_dir, output_dir, is_lemma=False):
+def calculate_tf(documents, documents_tokens=None, is_lemmas=False):
+    tf = {}
+    for doc_id, data in documents.items():
+        term_counts = defaultdict(int)
+        if is_lemmas:
+            for lemma, forms in data:
+                term_counts[lemma] += sum(documents_tokens[doc_id].count(form) for form in forms)
+        else:
+            for term in data:
+                term_counts[term] += 1
+        tf[doc_id] = term_counts
+    return tf
+
+
+def calculate_idf(documents, is_lemmas=False):
+    idf = defaultdict(float)
+    num_docs = len(documents)
+    term_doc_count = defaultdict(int)
+
+    for data in documents.values():
+        unique_terms = set(lemma for lemma, forms in data) if is_lemmas else set(data)
+        for term in unique_terms:
+            term_doc_count[term] += 1
+
+    for term, count in term_doc_count.items():
+        idf[term] = math.log(num_docs / count) if count else 0.0
+
+    return idf
+
+
+def calculate_tf_idf(tf, idf):
+    return {
+        doc_id: {term: freq * idf[term] for term, freq in terms.items()}
+        for doc_id, terms in tf.items()
+    }
+
+
+def save_results(idf, tf_idf, output_dir, prefix):
     os.makedirs(output_dir, exist_ok=True)
-
-    for i in range(1, TOTAL_DOCS + 1):
-        input_file = f'lemmas_{i}.txt' if is_lemma else f'token_{i}.txt'
-        output_file = f'tfidf_{i}.txt'
-        input_path = os.path.join(input_dir, input_file)
-        output_path = os.path.join(output_dir, output_file)
-
-        if not os.path.exists(input_path):
-            continue
-
-        term_freq = defaultdict(int)
-        total_terms = 0
-
-        with open(input_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                if is_lemma:
-                    term = line.strip().split()[0]
-                else:
-                    term = line.strip()
-                term_freq[term] += 1
-                total_terms += 1
-
-        with open(output_path, 'w', encoding='utf-8') as f_out:
-            for term, freq in term_freq.items():
-                tf = freq / total_terms
-                df = df_counts.get(term, 1)
-                idf = math.log(TOTAL_DOCS / df)
-                tfidf = tf * idf
-                f_out.write(f'{term} {idf:.6f} {tfidf:.6f}\n')
+    for doc_id, terms in tf_idf.items():
+        with open(os.path.join(output_dir, f"{prefix}_page_{doc_id}.txt"), 'w', encoding='utf-8') as f:
+            for term in terms:
+                f.write(f"{term} {idf[term]} {tf_idf[doc_id][term]}\n")
 
 
-if __name__ == '__main__':
-    print("Подсчитываем df для токенов...")
-    df_tokens = calculate_df('tokens', is_lemma=False)
+def main():
+    tokens_dir = "tokens"
+    lemmas_dir = "lemmas"
+    output_terms_dir = "tf_idf_terms"
+    output_lemmas_dir = "tf_idf_lemmas"
 
-    print("Подсчитываем df для лемм...")
-    df_lemmas = calculate_df('lemmas', is_lemma=True)
+    print("Loading documents...")
+    documents_tokens, documents_lemmas = load_documents(tokens_dir, lemmas_dir)
 
-    print("Вычисляем TF-IDF для токенов...")
-    compute_tfidf(df_tokens, 'tokens', 'tfidf_tokens', is_lemma=False)
+    if not documents_tokens or not documents_lemmas:
+        print("Error: No documents loaded. Check file paths.")
+        return
 
-    print("Вычисляем TF-IDF для лемм...")
-    compute_tfidf(df_lemmas, 'lemmas', 'tfidf_lemmas', is_lemma=True)
+    print("Calculating TF-IDF for tokens...")
+    tf_tokens = calculate_tf(documents_tokens)
+    idf_tokens = calculate_idf(documents_tokens)
+    tf_idf_tokens = calculate_tf_idf(tf_tokens, idf_tokens)
 
-    print("Готово! Результаты сохранены в папки tfidf_tokens/ и tfidf_lemmas/")
+    print("Calculating TF-IDF for lemmas...")
+    tf_lemmas = calculate_tf(documents_lemmas, documents_tokens, is_lemmas=True)
+    idf_lemmas = calculate_idf(documents_lemmas, is_lemmas=True)
+    tf_idf_lemmas = calculate_tf_idf(tf_lemmas, idf_lemmas)
+
+    print("Saving results...")
+    save_results(idf_tokens, tf_idf_tokens, output_terms_dir, "terms")
+    save_results(idf_lemmas, tf_idf_lemmas, output_lemmas_dir, "lemmas")
+
+    print("Done!")
+
+
+if __name__ == "__main__":
+    main()
