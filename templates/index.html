@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Поисковая система</title>
+    <link href="/static/style.css" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container">
+        <h1>Поисковая система</h1>
+        <form id="searchForm">
+            <input type="text" id="query" name="query" placeholder="Введите запрос" required>
+            <button type="submit">Поиск</button>
+        </form>
+        <div id="results"></div>
+    </div>
+
+    <script>
+        document.getElementById('searchForm').addEventListener('submit', async function (e) {
+            e.preventDefault();
+            const query = document.getElementById('query').value;
+            const resultsDiv = document.getElementById('results');
+
+            resultsDiv.innerHTML = '<p>Идет поиск...</p>';
+
+            try {
+                const response = await fetch('/search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ query: query })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    if (data.count > 0) {
+                        let html = `<p>Найдено документов: ${data.count}</p><ul>`;
+                        data.results.forEach(doc => {
+                            html += `<li><a href="/page/${doc}" target="_blank">Документ ${doc}</a></li>`;
+                        });
+                        html += '</ul>';
+                        resultsDiv.innerHTML = html;
+                    } else {
+                        resultsDiv.innerHTML = '<p>Ничего не найдено</p>';
+                    }
+                } else {
+                    resultsDiv.innerHTML = `<p class="error">Ошибка: ${data.error}</p>`;
+                }
+            } catch (error) {
+                resultsDiv.innerHTML = `<p class="error">Ошибка соединения: ${error}</p>`;
+            }
+        });
+    </script>
+</body>
+
+</html>
