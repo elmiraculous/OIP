@@ -2,103 +2,119 @@ import os
 import math
 from collections import defaultdict
 
+def load_lemmas(lemmas_file):
+    """Загрузка соответствия между леммами и их формами из файла"""
+    lemmas_dict = {}
+    try:
+        with open(lemmas_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                parts = line.strip().split()
+                if not parts:
+                    continue
+                lemma = parts[0]
+                tokens = parts[1:] if len(parts) > 1 else []
+                lemmas_dict[lemma] = tokens
+    except Exception as e:
+        print(f"Ошибка загрузки {lemmas_file}: {str(e)}")
+    return lemmas_dict
 
-def load_documents(tokens_dir, lemmas_dir, max_docs=192):
-    documents_tokens = {}
-    documents_lemmas = {}
+def calculate_tf(tokens):
+    """Вычисление TF (term frequency) для списка токенов"""
+    tf = defaultdict(float)
+    total = len(tokens)
+    if total == 0:
+        return tf
+    for token in tokens:
+        tf[token] += 1
+    return {k: v / total for k, v in tf.items()}
 
-    for doc_id in range(1, max_docs + 1):
-        token_file = os.path.join(tokens_dir, f"token_{doc_id}.txt")
-        lemma_file = os.path.join(lemmas_dir, f"lemmas_{doc_id}.txt")
-
-        if os.path.exists(token_file):
-            with open(token_file, 'r', encoding='utf-8') as f:
-                documents_tokens[str(doc_id)] = f.read().split()
-
-        if os.path.exists(lemma_file):
-            documents_lemmas[str(doc_id)] = []
-            with open(lemma_file, 'r', encoding='utf-8') as f:
-                for line in f:
-                    lemma, *forms = line.strip().split()
-                    documents_lemmas[str(doc_id)].append((lemma, forms))
-
-    return documents_tokens, documents_lemmas
-
-
-def calculate_tf(documents, documents_tokens=None, is_lemmas=False):
-    tf = {}
-    for doc_id, data in documents.items():
-        term_counts = defaultdict(int)
-        if is_lemmas:
-            for lemma, forms in data:
-                term_counts[lemma] += sum(documents_tokens[doc_id].count(form) for form in forms)
-        else:
-            for term in data:
-                term_counts[term] += 1
-        tf[doc_id] = term_counts
-    return tf
-
-
-def calculate_idf(documents, is_lemmas=False):
+def calculate_idf(docs_items):
+    """Вычисление IDF (inverse document frequency) для списка документов"""
     idf = defaultdict(float)
-    num_docs = len(documents)
-    term_doc_count = defaultdict(int)
+    total_docs = len(docs_items)
+    if total_docs == 0:
+        return idf
 
-    for data in documents.values():
-        unique_terms = set(lemma for lemma, forms in data) if is_lemmas else set(data)
-        for term in unique_terms:
-            term_doc_count[term] += 1
+    doc_freq = defaultdict(int)
+    print("Вычисление IDF...")
+    for doc in docs_items:
+        unique_items = set(doc)
+        for item in unique_items:
+            doc_freq[item] += 1
 
-    for term, count in term_doc_count.items():
-        idf[term] = math.log(num_docs / count) if count else 0.0
-
-    return idf
-
-
-def calculate_tf_idf(tf, idf):
     return {
-        doc_id: {term: freq * idf[term] for term, freq in terms.items()}
-        for doc_id, terms in tf.items()
+        item: max(0.0, math.log((total_docs + 1) / (count + 1)) + 1)
+        for item, count in doc_freq.items()
     }
 
+def process_tfidf():
+    """Основная функция для обработки TF-IDF"""
+    os.makedirs('tf_idf_terms', exist_ok=True)
+    os.makedirs('tf_idf_lemmas', exist_ok=True)
 
-def save_results(idf, tf_idf, output_dir, prefix):
-    os.makedirs(output_dir, exist_ok=True)
-    for doc_id, terms in tf_idf.items():
-        with open(os.path.join(output_dir, f"{prefix}_page_{doc_id}.txt"), 'w', encoding='utf-8') as f:
-            for term in terms:
-                f.write(f"{term} {idf[term]} {tf_idf[doc_id][term]}\n")
+    files = []
+    for i in range(1, 193):
+        lemma_file = f'lemmas/lemmas_{i}.txt'
+        token_file = f'tokens/token_{i}.txt'
+        if os.path.exists(lemma_file) and os.path.exists(token_file):
+            files.append(str(i))
 
+    all_data = []
+    print("Загрузка файлов...")
+    for name in files:
+        lemma_file = f'lemmas/lemmas_{name}.txt'
+        token_file = f'tokens/token_{name}.txt'
 
-def main():
-    tokens_dir = "tokens"
-    lemmas_dir = "lemmas"
-    output_terms_dir = "tf_idf_terms"
-    output_lemmas_dir = "tf_idf_lemmas"
+        if not os.path.exists(lemma_file):
+            print(f"Файл {lemma_file} не найден")
+            continue
+        if not os.path.exists(token_file):
+            print(f"Файл {token_file} не найден")
+            continue
 
-    print("Loading documents...")
-    documents_tokens, documents_lemmas = load_documents(tokens_dir, lemmas_dir)
+        lemmas = load_lemmas(lemma_file)
+        try:
+            with open(token_file, 'r', encoding='utf-8') as f:
+                tokens = f.read().split()
+        except Exception as e:
+            print(f"Ошибка чтения {token_file}: {e}")
+            continue
 
-    if not documents_tokens or not documents_lemmas:
-        print("Error: No documents loaded. Check file paths.")
-        return
+        all_data.append((name, lemmas, tokens))
 
-    print("Calculating TF-IDF for tokens...")
-    tf_tokens = calculate_tf(documents_tokens)
-    idf_tokens = calculate_idf(documents_tokens)
-    tf_idf_tokens = calculate_tf_idf(tf_tokens, idf_tokens)
+    idf_terms = calculate_idf([d[2] for d in all_data])
+    idf_lemmas = calculate_idf([list(d[1].keys()) for d in all_data])
 
-    print("Calculating TF-IDF for lemmas...")
-    tf_lemmas = calculate_tf(documents_lemmas, documents_tokens, is_lemmas=True)
-    idf_lemmas = calculate_idf(documents_lemmas, is_lemmas=True)
-    tf_idf_lemmas = calculate_tf_idf(tf_lemmas, idf_lemmas)
+    print("Обработка документов...")
+    for name, lemmas, tokens in all_data:
+        tf_terms = calculate_tf(tokens)
 
-    print("Saving results...")
-    save_results(idf_tokens, tf_idf_tokens, output_terms_dir, "terms")
-    save_results(idf_lemmas, tf_idf_lemmas, output_lemmas_dir, "lemmas")
+        try:
+            with open(f'tf_idf_terms/terms_page_{name}.txt', 'w', encoding='utf-8') as f:
+                for term, tf in tf_terms.items():
+                    idf_val = idf_terms.get(term, 0.0)
+                    tfidf_val = tf * idf_val
+                    f.write(f"{term} {idf_val:.4f} {tfidf_val:.4f}\n")
+        except Exception as e:
+            print(f"Ошибка записи terms {name}: {e}")
 
-    print("Done!")
+        total_terms = len(tokens)
+        if total_terms == 0:
+            continue
 
+        lemma_scores = {}
+        for lemma, words in lemmas.items():
+            count = sum(1 for token in tokens if token in words)
+            tf_lemma = count / total_terms
+            lemma_scores[lemma] = tf_lemma * idf_lemmas.get(lemma, 0.0)
+
+        try:
+            with open(f'tf_idf_lemmas/lemmas_page_{name}.txt', 'w', encoding='utf-8') as f:
+                for lemma, score in lemma_scores.items():
+                    idf_val = idf_lemmas.get(lemma, 0.0)
+                    f.write(f"{lemma} {idf_val:.4f} {score:.4f}\n")
+        except Exception as e:
+            print(f"Ошибка записи lemmas {name}: {e}")
 
 if __name__ == "__main__":
-    main()
+    process_tfidf()
